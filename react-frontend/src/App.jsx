@@ -23,13 +23,17 @@ function App() {
 
   const startRecording = async () => {
     setTranscript([]);
+    setAslGloss(''); // Clear previous ASL gloss
     setError('');
+    
     wsRef.current = new WebSocket('ws://localhost:3001');
+    
     wsRef.current.onmessage = (event) => {
-      console.log('[WS MESSAGE]', event.data); // Debug log
+      console.log('[WS MESSAGE]', event.data);
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'aslGloss') {
+          console.log('[ASL GLOSS RECEIVED]', data.gloss);
           setAslGloss(data.gloss);
           return;
         }
@@ -38,9 +42,16 @@ function App() {
         setTranscript((prev) => [...prev, event.data]);
       }
     };
+    
     wsRef.current.onopen = async () => {
+      console.log('[WS OPEN] Connection established');
+      console.log('[WS OPEN] Current ASL mode state:', aslMode);
+      
       // Send ASL mode toggle immediately after connection opens
-      wsRef.current.send(JSON.stringify({ type: 'aslMode', enabled: aslMode }));
+      const aslMessage = JSON.stringify({ type: 'aslMode', enabled: aslMode });
+      console.log('[WS OPEN] Sending message:', aslMessage);
+      wsRef.current.send(aslMessage);
+      
       try {
         mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (err) {
@@ -48,27 +59,32 @@ function App() {
         wsRef.current.close();
         return;
       }
+      
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 16000
       });
+      
       const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
       processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
       source.connect(processorRef.current);
       processorRef.current.connect(audioContextRef.current.destination);
+      
       processorRef.current.onaudioprocess = (e) => {
         if (!wsRef.current || wsRef.current.readyState !== 1) return;
 
         const input = e.inputBuffer.getChannelData(0);
         const samples = resampleTo16k(input, audioContextRef.current.sampleRate);
         const int16Buffer = floatTo16BitPCM(samples);
-        wsRef.current.send(int16Buffer.buffer); // Send raw Int16Array buffer
+        wsRef.current.send(int16Buffer.buffer);
       };
     };
+    
     wsRef.current.onclose = () => {
       stopAudioProcessor();
       setRecording(false);
       setError('WebSocket connection closed. Please restart recording.');
     };
+    
     setRecording(true);
   };
 
@@ -80,9 +96,13 @@ function App() {
 
   // Update ASL mode and notify backend
   const handleASLModeChange = (e) => {
-    setAslMode(e.target.checked);
+    const newMode = e.target.checked;
+    setAslMode(newMode);
+    console.log('[ASL MODE CHANGED]', newMode);
+    
     if (wsRef.current && wsRef.current.readyState === 1) {
-      wsRef.current.send(JSON.stringify({ type: 'aslMode', enabled: e.target.checked }));
+      console.log('[SENDING ASL MODE UPDATE]', newMode);
+      wsRef.current.send(JSON.stringify({ type: 'aslMode', enabled: newMode }));
     }
   };
 
@@ -94,9 +114,10 @@ function App() {
           type="checkbox"
           checked={aslMode}
           onChange={handleASLModeChange}
+          disabled={recording} // Disable changes during recording
           style={{ marginRight: 8 }}
         />
-        ASL Transcription
+        ASL Transcription {aslMode && '(Enabled)'}
       </label>
       <button onClick={recording ? stopRecording : startRecording} style={{ padding: '12px 24px', fontSize: 16 }}>
         {recording ? 'Stop Recording' : 'Start Recording'}
@@ -109,13 +130,13 @@ function App() {
             ? 'Transcript will appear here...'
             : transcript.map((line, idx) => <div key={idx}>{line}</div>)}
         </div>
-        {aslMode && (
-          <div style={{ marginTop: 20, padding: 15, background: '#e6f7ff', border: '1px solid #8ecae6', minHeight: 100, borderRadius: 5, fontFamily: 'monospace' }}>
-            <strong>ASL Gloss:</strong>
-            <div>{aslGloss || 'ASL gloss will appear here after a pause...'}</div>
-          </div>
-        )}
       </div>
+      {aslMode && (
+        <div style={{ marginTop: 20, padding: 15, background: '#e6f7ff', border: '1px solid #8ecae6', minHeight: 100, borderRadius: 5, fontFamily: 'monospace' }}>
+          <strong>ASL Gloss:</strong>
+          <div>{aslGloss || 'ASL gloss will appear here after a pause...'}</div>
+        </div>
+      )}
     </div>
   );
 }

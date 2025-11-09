@@ -64,11 +64,16 @@ wss.on("connection", async (ws) => {
           if (pauseTimer) clearTimeout(pauseTimer);
           
           pauseTimer = setTimeout(async () => {
+            console.log(`[PAUSE TRIGGERED] ASL Mode: ${aslMode}, Buffer: "${buffer.trim()}"`);
             if (aslMode && buffer.trim()) {
               console.log("[ASL REQUEST] Sending to Ollama:", buffer.trim());
               const gloss = await getASLGloss(buffer.trim());
               console.log("[ASL RESPONSE] Gloss:", gloss);
-              ws.send(JSON.stringify({ type: "aslGloss", gloss }));
+              if (gloss) {
+                ws.send(JSON.stringify({ type: "aslGloss", gloss }));
+              } else {
+                console.log("[ASL WARNING] Empty gloss returned from Ollama");
+              }
             }
             buffer = "";
           }, 1500); // 1.5s pause
@@ -81,20 +86,32 @@ wss.on("connection", async (ws) => {
 
   // Handle audio & ASL mode messages from frontend
   ws.on("message", (message) => {
-    if (Buffer.isBuffer(message)) {
-      console.log(`[AUDIO RECEIVED] Buffer (${message.length} bytes)`);
-      dgConnection.send(message);
-    } else {
-      try {
-        const msg = JSON.parse(message);
-        if (msg.type === "aslMode") {
-          aslMode = !!msg.enabled;
-          console.log(`[ASL MODE] ${aslMode}`);
+    // Check if this might be a JSON message first
+    let messageStr = null;
+    try {
+      if (Buffer.isBuffer(message)) {
+        // Try to decode as string
+        messageStr = message.toString('utf8');
+        // If it starts with { it's probably JSON
+        if (messageStr.startsWith('{')) {
+          const msg = JSON.parse(messageStr);
+          console.log("[JSON MESSAGE RECEIVED]", msg);
+          if (msg.type === "aslMode") {
+            aslMode = !!msg.enabled;
+            console.log(`[ASL MODE SET] ${aslMode}`);
+          }
+          return; // Don't send to Deepgram
         }
-      } catch {
-        console.log("⚠️ Non-binary non-JSON message received");
       }
+    } catch (err) {
+      // Not JSON, must be audio
     }
+    
+    // If we get here, it's audio data
+    if (Math.random() < 0.05) { // Log 5% of audio packets
+      console.log(`[AUDIO RECEIVED] Buffer (${message.length} bytes)`);
+    }
+    dgConnection.send(message);
   });
 
   ws.on("close", () => {
