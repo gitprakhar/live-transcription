@@ -40,7 +40,9 @@ wss.on("connection", async (ws) => {
   dgConnection.on("error", (err) => console.error("❌ Deepgram error:", err));
 
   // Handle transcripts from Deepgram
-  dgConnection.on("transcript", (data) => {
+  dgConnection.on("Results", (data) => {
+    console.log('[DG TRANSCRIPT EVENT]', JSON.stringify(data));
+    
     try {
       if (
         data &&
@@ -50,15 +52,22 @@ wss.on("connection", async (ws) => {
         data.channel.alternatives[0].transcript
       ) {
         const text = data.channel.alternatives[0].transcript.trim();
+        
         if (text) {
+          console.log("📝 Transcription:", text);
           ws.send(text);
+
           // Buffer for ASL gloss
           buffer += (buffer ? " " : "") + text;
+
           // Reset pause timer
           if (pauseTimer) clearTimeout(pauseTimer);
+          
           pauseTimer = setTimeout(async () => {
             if (aslMode && buffer.trim()) {
+              console.log("[ASL REQUEST] Sending to Ollama:", buffer.trim());
               const gloss = await getASLGloss(buffer.trim());
+              console.log("[ASL RESPONSE] Gloss:", gloss);
               ws.send(JSON.stringify({ type: "aslGloss", gloss }));
             }
             buffer = "";
@@ -73,14 +82,18 @@ wss.on("connection", async (ws) => {
   // Handle audio & ASL mode messages from frontend
   ws.on("message", (message) => {
     if (Buffer.isBuffer(message)) {
+      console.log(`[AUDIO RECEIVED] Buffer (${message.length} bytes)`);
       dgConnection.send(message);
     } else {
       try {
         const msg = JSON.parse(message);
         if (msg.type === "aslMode") {
           aslMode = !!msg.enabled;
+          console.log(`[ASL MODE] ${aslMode}`);
         }
-      } catch {}
+      } catch {
+        console.log("⚠️ Non-binary non-JSON message received");
+      }
     }
   });
 
